@@ -1,0 +1,27 @@
+version: 0.2
+
+env:
+  variables:
+    IMAGE_TAG: "latest"
+    ECR_REPOSITORY: "my-ecr-repo"
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 081653453064.dkr.ecr.us-east-1.amazonaws.com
+      - REPO_URI=081653453064.dkr.ecr.us-east-1.amazonaws.com/$ECR_REPOSITORY
+  build:
+    commands:
+      - echo Building the Docker image...
+      - docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+      - docker tag $ECR_REPOSITORY:$IMAGE_TAG $REPO_URI:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Pushing the Docker image to ECR...
+      - docker push $REPO_URI:$IMAGE_TAG
+
+artifacts:
+  files:
+    - '**/*'
+

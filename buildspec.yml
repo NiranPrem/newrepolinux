@@ -4,22 +4,46 @@ env:
   variables:
     IMAGE_TAG: "latest"
     ECR_REPOSITORY: "my-ecr-repo"
+    AWS_REGION: "us-east-1"
+    CLUSTER_NAME: "my-webapp-cluster"
+    SERVICE_NAME: "my-webapp-task-service-x3hwvrqz"
+    TASK_FAMILY: "my-webapp-task"
 
 phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
-      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 081653453064.dkr.ecr.us-east-1.amazonaws.com
-      - REPO_URI=081653453064.dkr.ecr.us-east-1.amazonaws.com/$ECR_REPOSITORY
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 081653453064.dkr.ecr.$AWS_REGION.amazonaws.com
+      - REPO_URI=081653453064.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY
+
   build:
     commands:
       - echo Building the Docker image...
       - docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
       - docker tag $ECR_REPOSITORY:$IMAGE_TAG $REPO_URI:$IMAGE_TAG
+
   post_build:
     commands:
       - echo Pushing the Docker image to ECR...
       - docker push $REPO_URI:$IMAGE_TAG
+
+      - echo Fetching current ECS task definition...
+      - aws ecs describe-task-definition --task-definition $TASK_FAMILY > taskdef.json
+
+      - echo Updating task definition with new image...
+      - |
+        jq --arg IMAGE "$REPO_URI:$IMAGE_TAG" \
+        '.taskDefinition.containerDefinitions[0].image = $IMAGE |
+         .taskDefinition | 
+         del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities)' \
+         taskdef.json > new-taskdef.json
+
+      - echo Registering new task definition...
+      - aws ecs register-task-definition --cli-input-json file://new-taskdef.json > new-taskdef-resp.json
+
+      - echo Updating ECS service to use new task definition...
+      - NEW_TASK_DEF_ARN=$(jq -r '.taskDefinition.taskDefinitionArn' new-taskdef-resp.json)
+      - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --task-definition $NEW_TASK_DEF_ARN --force-new-deployment
 
 artifacts:
   files:
